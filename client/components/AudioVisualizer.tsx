@@ -19,8 +19,15 @@ export function AudioVisualizer({ audioLevel, isActive, className = "" }: AudioV
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
+    // Set canvas size
+    const rect = canvas.getBoundingClientRect()
+    canvas.width = rect.width * window.devicePixelRatio
+    canvas.height = rect.height * window.devicePixelRatio
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio)
+
     const draw = () => {
-      const { width, height } = canvas
+      const width = rect.width
+      const height = rect.height
 
       // Clear canvas
       ctx.clearRect(0, 0, width, height)
@@ -28,19 +35,23 @@ export function AudioVisualizer({ audioLevel, isActive, className = "" }: AudioV
       if (isActive) {
         // Draw waveform visualization
         const centerY = height / 2
-        const barWidth = width / 32
+        const barCount = 32
+        const barWidth = width / barCount
         const maxBarHeight = height * 0.8
 
-        for (let i = 0; i < 32; i++) {
+        for (let i = 0; i < barCount; i++) {
           const x = i * barWidth
 
-          // Simulate frequency data with some randomness
-          const barHeight = (audioLevel + Math.random() * 0.3) * maxBarHeight
+          // Create more realistic frequency simulation
+          const frequency = i / barCount
+          const baseHeight = audioLevel * maxBarHeight
+          const variation = Math.sin(Date.now() * 0.01 + i * 0.5) * 0.3
+          const barHeight = Math.max(2, baseHeight * (0.7 + variation))
 
-          // Color based on audio level
-          const hue = isActive ? 120 - audioLevel * 120 : 120 // Green to red
-          const saturation = 70
-          const lightness = 50 + audioLevel * 30
+          // Color based on audio level and frequency
+          const hue = isActive ? Math.max(0, 120 - audioLevel * 120) : 120 // Green to red
+          const saturation = 70 + audioLevel * 20
+          const lightness = 40 + audioLevel * 30
 
           ctx.fillStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`
           ctx.fillRect(x, centerY - barHeight / 2, barWidth - 2, barHeight)
@@ -59,12 +70,21 @@ export function AudioVisualizer({ audioLevel, isActive, className = "" }: AudioV
         ctx.strokeStyle = "#ccc"
         ctx.lineWidth = 2
         ctx.beginPath()
-        ctx.moveTo(0, centerY)
-        ctx.lineTo(width, centerY)
+        ctx.moveTo(10, centerY)
+        ctx.lineTo(width - 10, centerY)
         ctx.stroke()
+
+        // Draw microphone icon placeholder
+        ctx.fillStyle = "#ccc"
+        ctx.font = "16px Arial"
+        ctx.textAlign = "center"
+        ctx.fillText("🎤", width / 2, centerY - 20)
+        ctx.fillText("Ready to listen", width / 2, centerY + 20)
       }
 
-      animationFrameRef.current = requestAnimationFrame(draw)
+      if (isActive) {
+        animationFrameRef.current = requestAnimationFrame(draw)
+      }
     }
 
     draw()
@@ -76,5 +96,11 @@ export function AudioVisualizer({ audioLevel, isActive, className = "" }: AudioV
     }
   }, [audioLevel, isActive])
 
-  return <canvas ref={canvasRef} width={300} height={100} className={`border rounded-lg bg-gray-50 ${className}`} />
+  return (
+    <canvas
+      ref={canvasRef}
+      className={`border rounded-lg bg-gray-50 ${className}`}
+      style={{ width: "100%", height: "100px" }}
+    />
+  )
 }

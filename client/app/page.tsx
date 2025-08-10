@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -9,7 +9,20 @@ import { SidebarTrigger } from "@/components/ui/sidebar"
 import { AudioVisualizer } from "@/components/AudioVisualizer"
 import { useAudioCapture } from "@/hooks/useAudioCapture"
 import { useWebSocket } from "@/hooks/useWebSocket"
-import { Play, Square, Mic, MicOff, Shield, AlertTriangle, CheckCircle, Volume2, VolumeX } from "lucide-react"
+import {
+  Play,
+  Square,
+  Mic,
+  MicOff,
+  Shield,
+  AlertTriangle,
+  CheckCircle,
+  Volume2,
+  VolumeX,
+  Wifi,
+  WifiOff,
+  RefreshCw,
+} from "lucide-react"
 
 type RiskLevel = "safe" | "suspicious" | "scam"
 type CallStatus = "idle" | "active" | "analyzing"
@@ -41,21 +54,44 @@ interface AnalysisResult {
   }
 }
 
+// Mock data for development mode
+const mockTranscriptSegments = [
+  "Hello, this is John from your bank's security department.",
+  "We've detected suspicious activity on your account.",
+  "I need to verify your account details immediately.",
+  "Can you please provide your social security number?",
+  "This is urgent, your account will be suspended otherwise.",
+]
+
 export default function LiveMonitor() {
   const [callStatus, setCallStatus] = useState<CallStatus>("idle")
   const [riskScore, setRiskScore] = useState(0)
   const [currentRiskLevel, setCurrentRiskLevel] = useState<RiskLevel>("safe")
   const [isAudioEnabled, setIsAudioEnabled] = useState(true)
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([])
+  const [isDemoMode, setIsDemoMode] = useState(false)
+
+  const mockIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const mockSegmentIndex = useRef(0)
 
   // WebSocket connection
-  const { isConnected, sendMessage, lastMessage } = useWebSocket(
-    `ws://localhost:8000/ws/${Date.now()}`,
-    handleWebSocketMessage,
-  )
+  const {
+    isConnected,
+    sendMessage,
+    lastMessage,
+    error: wsError,
+    connect,
+    connectionState,
+  } = useWebSocket(`ws://localhost:8000/ws/${Date.now()}`, handleWebSocketMessage)
 
   // Audio capture
-  const { isRecording, audioLevel, startRecording, stopRecording, error } = useAudioCapture(handleAudioData, {
+  const {
+    isRecording,
+    audioLevel,
+    startRecording,
+    stopRecording,
+    error: audioError,
+  } = useAudioCapture(handleAudioData, {
     sampleRate: 16000,
     channelCount: 1,
     echoCancellation: true,
@@ -119,6 +155,47 @@ export default function LiveMonitor() {
     }
   }
 
+  // Mock analysis for demo mode
+  function startMockAnalysis() {
+    mockSegmentIndex.current = 0
+    setTranscript([])
+    setRiskScore(0)
+    setCurrentRiskLevel("safe")
+
+    mockIntervalRef.current = setInterval(() => {
+      if (mockSegmentIndex.current < mockTranscriptSegments.length) {
+        const text = mockTranscriptSegments[mockSegmentIndex.current]
+        const riskLevel: RiskLevel =
+          mockSegmentIndex.current < 2 ? "safe" : mockSegmentIndex.current < 4 ? "suspicious" : "scam"
+        const score = Math.min(95, (mockSegmentIndex.current + 1) * 20)
+
+        const newSegment: TranscriptSegment = {
+          id: Date.now().toString(),
+          speaker: "caller",
+          text,
+          timestamp: new Date().toLocaleTimeString(),
+          riskLevel,
+          confidence: 85 + Math.random() * 10,
+        }
+
+        setTranscript((prev) => [...prev, newSegment])
+        setRiskScore(score)
+        setCurrentRiskLevel(riskLevel)
+
+        mockSegmentIndex.current++
+      } else {
+        stopMockAnalysis()
+      }
+    }, 3000)
+  }
+
+  function stopMockAnalysis() {
+    if (mockIntervalRef.current) {
+      clearInterval(mockIntervalRef.current)
+      mockIntervalRef.current = null
+    }
+  }
+
   const startAnalysis = useCallback(async () => {
     try {
       setCallStatus("active")
@@ -126,12 +203,15 @@ export default function LiveMonitor() {
       setRiskScore(0)
       setCurrentRiskLevel("safe")
 
-      // Start audio recording
-      await startRecording()
-
-      // Notify server
       if (isConnected) {
+        // Real mode with backend
+        setIsDemoMode(false)
+        await startRecording()
         sendMessage({ type: "start_analysis" })
+      } else {
+        // Demo mode without backend
+        setIsDemoMode(true)
+        startMockAnalysis()
       }
     } catch (error) {
       console.error("Failed to start analysis:", error)
@@ -141,13 +221,25 @@ export default function LiveMonitor() {
 
   const stopAnalysis = useCallback(() => {
     setCallStatus("idle")
-    stopRecording()
 
-    // Notify server
-    if (isConnected) {
-      sendMessage({ type: "stop_analysis" })
+    if (isDemoMode) {
+      stopMockAnalysis()
+    } else {
+      stopRecording()
+      if (isConnected) {
+        sendMessage({ type: "stop_analysis" })
+      }
     }
-  }, [stopRecording, isConnected, sendMessage])
+
+    setIsDemoMode(false)
+  }, [stopRecording, isConnected, sendMessage, isDemoMode])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopMockAnalysis()
+    }
+  }, [])
 
   const getRiskColor = (level: RiskLevel) => {
     switch (level) {
@@ -171,6 +263,34 @@ export default function LiveMonitor() {
     }
   }
 
+  const getConnectionIcon = () => {
+    switch (connectionState) {
+      case "connected":
+        return <Wifi className="h-4 w-4 text-green-600" />
+      case "connecting":
+        return <RefreshCw className="h-4 w-4 text-yellow-600 animate-spin" />
+      default:
+        return <WifiOff className="h-4 w-4 text-red-600" />
+    }
+  }
+
+  const getConnectionBadge = () => {
+    switch (connectionState) {
+      case "connected":
+        return (
+          <Badge variant="default" className="bg-green-600">
+            Connected
+          </Badge>
+        )
+      case "connecting":
+        return <Badge variant="secondary">Connecting...</Badge>
+      case "error":
+        return <Badge variant="destructive">Connection Error</Badge>
+      default:
+        return <Badge variant="outline">Disconnected</Badge>
+    }
+  }
+
   return (
     <div className="flex-1 space-y-6 p-6">
       <div className="flex items-center justify-between">
@@ -183,7 +303,13 @@ export default function LiveMonitor() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Badge variant={isConnected ? "default" : "destructive"}>{isConnected ? "Connected" : "Disconnected"}</Badge>
+          {getConnectionBadge()}
+          {!isConnected && (
+            <Button variant="outline" size="sm" onClick={connect}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Retry Connection
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setIsAudioEnabled(!isAudioEnabled)}>
             {isAudioEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
             Audio Alerts
@@ -191,10 +317,23 @@ export default function LiveMonitor() {
         </div>
       </div>
 
-      {error && (
-        <Card className="border-red-200 bg-red-50">
+      {/* Connection Status */}
+      {(wsError || audioError) && (
+        <Card className="border-yellow-200 bg-yellow-50">
           <CardContent className="pt-6">
-            <p className="text-red-600">Audio Error: {error}</p>
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
+              <div className="space-y-2">
+                <p className="font-medium text-yellow-800">Connection Issues Detected</p>
+                {wsError && <p className="text-sm text-yellow-700">WebSocket: {wsError}</p>}
+                {audioError && <p className="text-sm text-yellow-700">Audio: {audioError}</p>}
+                {!isConnected && (
+                  <p className="text-sm text-yellow-700">
+                    Running in demo mode. Start the backend server (python server/main.py) for full functionality.
+                  </p>
+                )}
+              </div>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -221,25 +360,27 @@ export default function LiveMonitor() {
 
             <Progress
               value={riskScore}
-              className={`h-3 ${
-                currentRiskLevel === "scam"
+              className={`h-3 ${currentRiskLevel === "scam"
                   ? "[&>div]:bg-red-500"
                   : currentRiskLevel === "suspicious"
                     ? "[&>div]:bg-orange-500"
                     : "[&>div]:bg-green-500"
-              }`}
+                }`}
             />
 
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <span>Voice Analysis:</span>
                 <Badge variant="outline" className="text-xs">
-                  {callStatus === "active" ? "Analyzing" : "Idle"}
+                  {callStatus === "active" ? (isDemoMode ? "Demo" : "Analyzing") : "Idle"}
                 </Badge>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <span>Connection:</span>
-                <span className="text-muted-foreground">{isConnected ? "Active" : "Disconnected"}</span>
+                <div className="flex items-center gap-1">
+                  {getConnectionIcon()}
+                  <span className="text-muted-foreground text-xs">{connectionState}</span>
+                </div>
               </div>
             </div>
           </CardContent>
@@ -256,14 +397,9 @@ export default function LiveMonitor() {
           <CardContent className="space-y-4">
             <div className="flex items-center justify-center gap-4">
               {callStatus === "idle" ? (
-                <Button
-                  onClick={startAnalysis}
-                  size="lg"
-                  className="bg-green-600 hover:bg-green-700"
-                  disabled={!isConnected}
-                >
+                <Button onClick={startAnalysis} size="lg" className="bg-green-600 hover:bg-green-700">
                   <Play className="h-5 w-5 mr-2" />
-                  Start Analysis
+                  {isConnected ? "Start Analysis" : "Start Demo"}
                 </Button>
               ) : (
                 <Button onClick={stopAnalysis} size="lg" variant="destructive">
@@ -275,23 +411,27 @@ export default function LiveMonitor() {
 
             {/* Audio Visualizer */}
             <div className="flex justify-center">
-              <AudioVisualizer audioLevel={audioLevel} isActive={isRecording} className="w-full max-w-md" />
+              <AudioVisualizer
+                audioLevel={isDemoMode ? Math.random() * 0.8 : audioLevel}
+                isActive={callStatus === "active"}
+                className="w-full max-w-md"
+              />
             </div>
 
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div className="flex items-center gap-2">
-                {isRecording ? (
+                {isRecording || isDemoMode ? (
                   <Mic className="h-4 w-4 text-green-600" />
                 ) : (
                   <MicOff className="h-4 w-4 text-gray-400" />
                 )}
-                <span>Microphone: {isRecording ? "Active" : "Inactive"}</span>
+                <span>Microphone: {isRecording || isDemoMode ? "Active" : "Inactive"}</span>
               </div>
               <div className="flex items-center gap-2">
                 <div
                   className={`h-2 w-2 rounded-full ${callStatus === "active" ? "bg-green-500 animate-pulse" : "bg-gray-400"}`}
                 />
-                <span>Status: {callStatus === "active" ? "Monitoring" : "Standby"}</span>
+                <span>Status: {callStatus === "active" ? (isDemoMode ? "Demo Mode" : "Monitoring") : "Standby"}</span>
               </div>
             </div>
           </CardContent>
@@ -307,7 +447,11 @@ export default function LiveMonitor() {
           <div className="space-y-3 max-h-96 overflow-y-auto">
             {transcript.length === 0 ? (
               <div className="text-center text-muted-foreground py-8">
-                {callStatus === "active" ? "Listening for speech..." : "Start analysis to see live transcript"}
+                {callStatus === "active"
+                  ? "Listening for speech..."
+                  : isConnected
+                    ? "Start analysis to see live transcript"
+                    : "Start demo to see simulated scam detection"}
               </div>
             ) : (
               transcript.map((segment) => (

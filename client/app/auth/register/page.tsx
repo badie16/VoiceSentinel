@@ -165,7 +165,7 @@ export default function Register() {
               <Checkbox
                 id="terms"
                 checked={acceptTerms}
-                onCheckedChange={(checked) => setAcceptTerms(checked as boolean)}
+                onCheckedChange={(checked: boolean | "indeterminate") => setAcceptTerms(checked === true)}
               />
               <Label htmlFor="terms" className="text-sm">
                 I agree to the{" "}
